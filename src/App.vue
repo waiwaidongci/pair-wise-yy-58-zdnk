@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import * as THREE from 'three';
 import { useLiftStore } from './store';
+import type { StepStatus } from './store';
+import ReplacementView from './ReplacementView.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -22,7 +24,8 @@ const nav = [
   { path: '/', label: '三维复核', icon: 'view_in_ar' },
   { path: '/models', label: '模型与参数', icon: 'tune' },
   { path: '/checks', label: '冲突与评论', icon: 'rule' },
-  { path: '/review', label: '多角色会签', icon: 'fact_check' }
+  { path: '/review', label: '多角色会签', icon: 'fact_check' },
+  { path: '/replace', label: '换吊校核', icon: 'swap_horiz' }
 ];
 
 const pageTitle = computed(() => nav.find((item) => item.path === route.path)?.label ?? '吊装工作台');
@@ -33,6 +36,14 @@ function go(path: string) {
 
 function severityLabel(severity: string) {
   return severity === 'high' ? '阻断' : '预警';
+}
+
+type QEvt = string | number | null;
+function numField(handler: (v: number) => void) {
+  return (value: QEvt) => handler(Number(value));
+}
+function textField(handler: (v: string) => void) {
+  return (value: QEvt) => handler(String(value ?? ''));
 }
 
 function submitComment() {
@@ -177,6 +188,12 @@ onBeforeUnmount(() => {
           <span>东塔转换桁架 · 方案版本 V{{ store.revision }}</span>
         </div>
         <q-space />
+        <q-badge v-if="store.activeRequest" color="deep-orange" outline class="status-badge">
+          换吊 {{ store.activeRequest.id }} 生效中 · V{{ store.activeRequest.freeze.revision }} 已冻结
+        </q-badge>
+        <q-badge v-if="store.retainedRequests.length" color="amber-9" text-color="white" outline class="status-badge">
+          {{ store.retainedRequests.length }} 份换吊申请保留中
+        </q-badge>
         <q-badge :color="store.locked ? 'teal' : 'orange'" outline class="status-badge">
           {{ store.locked ? '已锁定发布' : '会签中' }}
         </q-badge>
@@ -202,6 +219,9 @@ onBeforeUnmount(() => {
           <q-item-section v-if="item.path === '/checks'" side>
             <q-badge color="negative">{{ store.conflicts.length }}</q-badge>
           </q-item-section>
+          <q-item-section v-if="item.path === '/replace'" side>
+            <q-badge v-if="store.activeRequest" color="deep-orange">生效</q-badge>
+          </q-item-section>
         </q-item>
       </q-list>
       <div class="draft-state">
@@ -223,7 +243,11 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <section v-if="route.path === '/' || route.path === '/models'" class="work-grid">
+        <section v-if="route.path === '/replace'">
+          <ReplacementView />
+        </section>
+
+        <section v-if="route.path === '/'" class="work-grid">
           <article class="scene-panel content-panel">
             <div class="panel-heading">
               <div>
@@ -278,15 +302,33 @@ onBeforeUnmount(() => {
               <div><span>作业半径</span><strong>{{ store.selectedStep.radius }}m</strong></div>
               <div><span>风速限制</span><strong>{{ store.selectedStep.wind }}m/s</strong></div>
             </div>
-            <label class="field-label">荷载率</label>
-            <q-slider v-model="store.selectedStep.loadRate" :min="0" :max="120" color="primary" />
+            <label class="field-label">荷载率（按当前主吊性能表换算吊重）</label>
+            <q-slider :model-value="store.selectedStep.loadRate" :min="0" :max="120" color="primary"
+              @update:model-value="numField((value) => store.setStepLoadRate(value))" />
+            <div class="metric-grid mini-metrics">
+              <div><span>当前吊重</span><strong>{{ store.selectedStep.loadWeight }}t</strong></div>
+              <div><span>地基承载力</span><strong>{{ store.selectedStep.groundCapacity }}kPa</strong></div>
+            </div>
             <div class="form-row">
-              <q-input v-model.number="store.selectedStep.clearance" type="number" label="最小净空 / m" outlined dense />
-              <q-input v-model.number="store.selectedStep.wind" type="number" label="风速 / m/s" outlined dense />
+              <q-input :model-value="store.selectedStep.clearance" type="number" label="最小净空 / m" outlined dense
+                @update:model-value="numField((v) => store.updateStep({ clearance: v }))" />
+              <q-input :model-value="store.selectedStep.wind" type="number" label="风速 / m/s" outlined dense
+                @update:model-value="numField((v) => store.updateStep({ wind: v }))" />
+              <q-input :model-value="store.selectedStep.radius" type="number" label="作业半径 / m" outlined dense
+                @update:model-value="numField((v) => store.updateStep({ radius: v }))" />
+              <q-input :model-value="store.selectedStep.groundCapacity" type="number" label="地耐力 / kPa" outlined dense
+                @update:model-value="numField((v) => store.updateStep({ groundCapacity: v }))" />
+            </div>
+            <div v-if="store.selectedStep.snapshot" class="snapshot-chip" :class="{ stale: store.selectedStep.snapshot.stale }">
+              <q-icon :name="store.selectedStep.snapshot.stale ? 'sync_problem' : 'camera_alt'" />
+              <span>设备快照：{{ store.selectedStep.snapshot.craneModel }} · {{ store.selectedStep.snapshot.chartVersion }}
+                <template v-if="store.selectedStep.snapshot.stale"><br />档案 / 参数已变，快照过期，关联步骤将重算重签。</template>
+                <template v-else-if="store.selectedStep.snapshot.backup"><br />旧值已备份：原荷载率 {{ store.selectedStep.snapshot.backup.loadRate }}%。</template>
+              </span>
             </div>
             <label class="field-label">步骤结论</label>
             <q-btn-toggle
-              v-model="store.selectedStep.status"
+              :model-value="store.selectedStep.status"
               spread
               no-caps
               toggle-color="primary"
@@ -295,9 +337,10 @@ onBeforeUnmount(() => {
                 { label: '通过', value: 'passed' },
                 { label: '阻断', value: 'blocked' }
               ]"
+              @update:model-value="(value: StepStatus) => store.setStatus(value)"
             />
-            <q-input v-model="store.selectedStep.note" type="textarea" autogrow outlined label="现场控制说明" class="note-input" />
-            <q-btn class="save-step" color="primary" no-caps icon="save" label="保存步骤修改" @click="store.updateStep({})" />
+            <q-input :model-value="store.selectedStep.note" type="textarea" autogrow outlined label="现场控制说明" class="note-input"
+              @update:model-value="textField((value) => store.updateStep({ note: value }))" />
           </aside>
         </section>
 
