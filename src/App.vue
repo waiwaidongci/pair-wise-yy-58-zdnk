@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import * as THREE from 'three';
 import { useLiftStore } from './store';
+import ReplacementPage from './ReplacementPage.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -21,6 +22,7 @@ let previousX = 0;
 const nav = [
   { path: '/', label: '三维复核', icon: 'view_in_ar' },
   { path: '/models', label: '模型与参数', icon: 'tune' },
+  { path: '/replacement', label: '替换校核', icon: 'swap_horiz' },
   { path: '/checks', label: '冲突与评论', icon: 'rule' },
   { path: '/review', label: '多角色会签', icon: 'fact_check' }
 ];
@@ -212,7 +214,7 @@ onBeforeUnmount(() => {
 
     <q-page-container>
       <q-page class="workspace-page">
-        <header class="page-heading">
+        <header v-if="route.path !== '/replacement'" class="page-heading">
           <div>
             <div class="eyebrow">LP-2026-0918 / {{ pageTitle }}</div>
             <h1>{{ pageTitle }}</h1>
@@ -222,6 +224,8 @@ onBeforeUnmount(() => {
             <q-btn color="primary" no-caps icon="lock" :label="store.locked ? '版本已锁定' : '确认并锁定'" :disable="store.locked || store.conflicts.length > 0 || store.openComments.length > 0" @click="store.lockPlan" />
           </div>
         </header>
+
+        <ReplacementPage v-if="route.path === '/replacement'" />
 
         <section v-if="route.path === '/' || route.path === '/models'" class="work-grid">
           <article class="scene-panel content-panel">

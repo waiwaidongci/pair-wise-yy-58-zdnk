@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { graphqlClient, LIFT_PLAN_QUERY } from './graphql';
+import { useReplacementStore } from './replacement/store';
 
 export type StepStatus = 'pending' | 'passed' | 'blocked';
 export type Comment = {
@@ -85,6 +86,12 @@ export const useLiftStore = defineStore('lift-plan', {
       const index = this.steps.findIndex((step) => step.id === this.selectedStepId);
       if (index >= 0) this.steps[index] = { ...this.steps[index], ...patch };
       this.persist();
+      // 步骤参数一变：替换校核中关联步骤、冲突与对应角色签署立即失效重算，其他步骤照旧
+      try {
+        useReplacementStore().invalidateStep(this.selectedStepId);
+      } catch {
+        // 替换模块未启用时忽略
+      }
     },
     setStatus(status: StepStatus) {
       this.updateStep({ status });
